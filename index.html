@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>YouBike 即時車位（臺北）</title>
+<style>
+:root{font-family:system-ui,-apple-system,"Microsoft JhengHei","Noto Sans TC",sans-serif;color:#183044;background:#f4f8f7;font-size:17px}
+*{box-sizing:border-box}body{margin:0}main{max-width:1120px;margin:0 auto;padding:32px 20px 48px}
+.hero{background:linear-gradient(120deg,#095f56,#148b75);padding:32px;border-radius:22px;color:#fff;box-shadow:0 8px 25px #0a514521}
+h1{margin:0 0 10px;font-size:clamp(27px,4vw,38px)}.hero p{margin:0;opacity:.94}
+.panel{background:#fff;border:1px solid #dcebe8;border-radius:20px;padding:23px;margin-top:24px;box-shadow:0 4px 14px #1d50440d}
+label{font-weight:700;display:block;margin-bottom:9px}.controls{display:grid;grid-template-columns:2fr auto 1.3fr;align-items:end;gap:15px}
+input[type=search],select,button{font:inherit;min-height:48px;border-radius:11px}input[type=search],select{width:100%;background:#fff;border:1.5px solid #aaccc4;padding:10px 13px;color:#183044}
+button{cursor:pointer;border:0;background:#087e6b;color:white;font-weight:750;padding:10px 22px}button:hover:not(:disabled){background:#056453}button:disabled{opacity:.55;cursor:wait}
+.options{display:flex;align-items:center;flex-wrap:wrap;gap:15px;margin-top:19px}.check{display:flex;align-items:center;gap:9px;margin:0;font-weight:600}.check input{width:21px;height:21px;accent-color:#087e6b}
+#status{margin-top:17px;color:#315365;min-height:26px}#status.error{color:#b42318;font-weight:700}#status.loading{color:#086e60}#status.empty{color:#7b5b26}
+.summary{margin:24px 0 14px;color:#466174;font-size:16px}.cards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}
+.card{background:white;border:1px solid #d7e7e4;border-radius:17px;padding:20px;box-shadow:0 3px 11px #1d50440b;min-width:0}
+.station{font-weight:800;font-size:21px;margin:0 0 10px;line-height:1.4;overflow-wrap:anywhere}.area{color:#116e60;font-weight:700;font-size:15px}.address{color:#526477;margin:6px 0 19px;min-height:45px;overflow-wrap:anywhere}
+.figures{display:grid;grid-template-columns:1fr 1fr;gap:10px}.figure{border-radius:12px;background:#edf7f5;padding:12px;text-align:center}.figure:last-child{background:#f0f4fb}
+.figure span{display:block;font-size:14px;color:#425d6a}.number{font-size:36px;font-weight:850;color:#087e6b;line-height:1.4;font-variant-numeric:tabular-nums}.number.zero{color:#c82626}.figure:last-child .number{color:#345d92}
+.meta{border-top:1px solid #e8eeee;margin-top:17px;padding-top:12px;color:#536879;font-size:14px;line-height:1.9}
+footer{margin-top:32px;color:#526477;font-size:14px;line-height:1.8}a{color:#087e6b}a:focus-visible,button:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid #f8b83c;outline-offset:3px}
+@media(max-width:850px){.cards{grid-template-columns:repeat(2,minmax(0,1fr))}.controls{grid-template-columns:1fr auto}.sortbox{grid-column:1/-1}}
+@media(max-width:570px){main{padding:16px 12px 30px}.hero{padding:23px}.panel{padding:17px}.controls{grid-template-columns:1fr}.sortbox{grid-column:auto}.cards{grid-template-columns:1fr}.address{min-height:0}}
+</style>
+</head>
+<body>
+<main>
+<header class="hero"><h1>🚲 YouBike 即時車位（臺北）</h1><p>搜尋臺北市 YouBike 2.0 站點，即時查看可借車輛及可還空位。</p></header>
+<section class="panel" aria-label="站點搜尋及篩選">
+ <form id="searchForm" class="controls">
+  <div><label for="keyword">站名關鍵字（預設空白）</label><input id="keyword" type="search" value="" placeholder="例如：科技大樓、台北車站" autocomplete="off"></div>
+  <button id="searchBtn" type="submit">🔍 搜尋</button>
+  <div class="sortbox"><label for="sort">排序方式</label><select id="sort"><option value="name">依站名</option><option value="bikes">可借車輛多到少</option></select></div>
+ </form>
+ <div class="options"><label class="check" for="onlyAvailable"><input id="onlyAvailable" type="checkbox">只看有車可借</label><button id="reloadBtn" type="button">↻ 更新即時資料</button></div>
+ <div id="status" role="status" aria-live="polite">資料載入中…</div>
+</section>
+<p id="summary" class="summary" aria-live="polite"></p>
+<div id="joke" hidden></div>
+<section id="cards" class="cards" aria-label="YouBike 站點搜尋結果"></section>
+<footer>資料來源：<a href="https://data.gov.taipei/dataset/detail?id=c6bc8aed-557d-41d5-bfb1-8da24f78f2fb" target="_blank" rel="noopener noreferrer">臺北市政府交通局－YouBike 2.0 即時資訊</a>；<a href="https://data.gov.tw/dataset/137993" target="_blank" rel="noopener noreferrer">政府資料開放平臺</a>（政府資料開放授權條款第 1 版）。<br>資料為 API 即時查詢結果，車輛與空位數量可能隨時變動。</footer>
+</main>
+<script>
+'use strict';
+const API_URL = 'https://tcgbusfs.blob.core.windows.net/dotapp/youbike/v2/youbike_immediate.json';
+const $ = id => document.getElementById(id);
+let stations = [];
+let loading = false;
+
+// 同時支援臺北市資料大平臺新版欄位與舊版欄位。
+function normalize(raw) {
+  const num = value => { const n = Number(value); return Number.isFinite(n) ? n : 0; };
+  return {
+    id: String(raw.sno ?? ''),
+    name: String(raw.sna ?? '').replace(/^YouBike2\.0[_＿\s-]*/i, '').trim(),
+    area: String(raw.sarea ?? ''),
+    address: String(raw.ar ?? ''),
+    total: num(raw.tot ?? raw.Quantity ?? raw.quantity),
+    bikes: num(raw.sbi ?? raw.available_rent_bikes),
+    empty: num(raw.bemp ?? raw.available_return_bikes),
+    updated: String(raw.mday ?? raw.infoTime ?? ''),
+  };
+}
+function formatTime(raw) {
+  const s = String(raw || '').trim();
+  // 舊版 YYYYMMDDhhmmss
+  let m = s.match(/^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})$/);
+  if (m) return `${m[1]}/${m[2]}/${m[3]} ${m[4]}:${m[5]}:${m[6]}`;
+  // 新版 YYYY-MM-DD HH:mm:ss
+  m = s.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})/);
+  if (m) return `${m[1]}/${m[2]}/${m[3]} ${m[4]}:${m[5]}:${m[6]}`;
+  return s || '未提供';
+}
+function setStatus(message, kind = '') {
+  $('status').textContent = message;
+  $('status').className = kind;
+}
+function setLoading(value) {
+  loading = value;
+  $('searchBtn').disabled = value;
+  $('reloadBtn').disabled = value;
+  $('keyword').disabled = value;
+  $('sort').disabled = value;
+  $('onlyAvailable').disabled = value;
+}
+function appendText(parent, tag, text, className) {
+  const el = document.createElement(tag);
+  el.textContent = text;
+  if (className) el.className = className;
+  parent.appendChild(el);
+  return el;
+}
+function makeCard(station) {
+  const card = document.createElement('article');
+  card.className = 'card';
+  appendText(card, 'h2', station.name || '未提供站名', 'station');
+  appendText(card, 'div', station.area || '未提供行政區', 'area');
+  appendText(card, 'p', station.address || '未提供地址', 'address');
+  const figures = document.createElement('div');
+  figures.className = 'figures';
+  for (const info of [
+    { label: '可借車輛', value: station.bikes, zeroRed: true },
+    { label: '可還空位', value: station.empty, zeroRed: false }
+  ]) {
+    const fig = document.createElement('div'); fig.className = 'figure';
+    appendText(fig, 'span', info.label);
+    appendText(fig, 'strong', `${info.value} 台`, 'number' + (info.zeroRed && info.value === 0 ? ' zero' : ''));
+    figures.appendChild(fig);
+  }
+  card.appendChild(figures);
+  const meta = document.createElement('div'); meta.className = 'meta';
+  appendText(meta, 'div', `總車位：${station.total} 格`);
+  appendText(meta, 'div', `更新時間：${formatTime(station.updated)}`);
+  card.appendChild(meta);
+  return card;
+}
+function render() {
+  const keyword = $('keyword').value.trim().toLocaleLowerCase('zh-Hant');
+  const onlyAvailable = $('onlyAvailable').checked;
+  const sort = $('sort').value;
+  const matched = stations.filter(s =>
+    s.name.toLocaleLowerCase('zh-Hant').includes(keyword) &&
+    (!onlyAvailable || s.bikes > 0)
+  );
+  matched.sort(sort === 'bikes'
+    ? (a, b) => b.bikes - a.bikes || a.name.localeCompare(b.name, 'zh-Hant')
+    : (a, b) => a.name.localeCompare(b.name, 'zh-Hant'));
+  const visible = matched.slice(0, 12);
+  const cards = $('cards'); cards.replaceChildren();
+  const frag = document.createDocumentFragment();
+  for (const s of visible) frag.appendChild(makeCard(s));
+  cards.appendChild(frag);
+  $('summary').textContent = `符合條件 ${matched.length} 站，顯示 ${visible.length} 站（最多 12 站）`;
+  if (matched.length === 0) {
+    setStatus('找不到符合條件的站點，請更換關鍵字或取消「只看有車可借」。', 'empty');
+  } else {
+    setStatus(`資料已更新，已載入 ${stations.length} 個站點。`);
+  }
+}
+async function loadStations() {
+  if (loading) return;
+  setLoading(true);
+  setStatus('資料載入中…', 'loading');
+  $('summary').textContent = '';
+  $('cards').replaceChildren();
+  try {
+    const response = await fetch(API_URL, { cache: 'no-store' });
+    if (!response.ok) throw new Error(`HTTP ${response.status} ${response.statusText}`);
+    const json = await response.json();
+    if (!Array.isArray(json)) throw new Error('API 回傳格式不符：預期為站點陣列。');
+    if (json.length === 0) throw new Error('API 回傳空陣列，暫時沒有站點資料。');
+    stations = json.map(normalize);
+    console.log('臺北 YouBike API 原始資料：', json);
+    console.log('第一筆欄位名稱：', Object.keys(json[0]));
+    render();
+  } catch (error) {
+    stations = [];
+    setStatus(`資料載入失敗：${error.message}。請檢查網路，或確認瀏覽器是否阻擋跨來源請求（CORS），再按「更新即時資料」。`, 'error');
+    $('summary').textContent = '';
+    console.error('YouBike API 讀取失敗：', error);
+  } finally {
+    setLoading(false);
+  }
+}
+$('searchForm').addEventListener('submit', e => { e.preventDefault(); if (!loading) render(); });
+$('sort').addEventListener('change', () => { if (!loading && stations.length) render(); });
+$('onlyAvailable').addEventListener('change', () => { if (!loading && stations.length) render(); });
+$('reloadBtn').addEventListener('click', loadStations);
+loadStations();
+</script>
+</body>
+</html>
